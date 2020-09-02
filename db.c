@@ -167,6 +167,7 @@ uint32_t* leaf_node_num_cells(void* node) {
 }
 
 /*
+ * 返回键值对
  * node(第几页) + (往后移) LEAF_NODE_HEADER_SIZE(叶节点头部大小) + (往后移) cell_num(n) * LEAF_NODE_CELL_SIZE(页节点数据大小)
  */
 void* leaf_node_cell(void* node, uint32_t cell_num) {
@@ -295,7 +296,7 @@ Cursor* table_end(Table* table) {
 }
 
 /*
- * 
+ * 返回游标所指的键值对中的值
  */
 void* cursor_value(Cursor* cursor) {
   uint32_t page_num = cursor->page_num;
@@ -360,9 +361,10 @@ Table* db_open(const char* filename) {
 
   Table* table = malloc(sizeof(Table));
   table->pager = pager;
+  table->root_page_num = 0;
 
   if (pager->num_pages == 0) {
-    //如果是一个空文件则自动创建一页,并初始化节点
+    //如果是一个空文件则自动创建一页作为BTree的根节点
     void* root_node = get_page(pager, 0);
     initialize_leaf_node(root_node);
   }
@@ -538,7 +540,6 @@ void leaf_node_insert(Cursor* cursor, uint32_t key, Row* value) {
   
   // 如果插入的数据位置不在最后面，则腾出空间并将后面的数据往后移
   if (cursor->cell_num < num_cells) {
-    // Make room for new cell
     for (uint32_t i = num_cells; i > cursor->cell_num; i--) {
       memcpy(leaf_node_cell(node, i), leaf_node_cell(node, i - 1),
              LEAF_NODE_CELL_SIZE);
@@ -551,6 +552,7 @@ void leaf_node_insert(Cursor* cursor, uint32_t key, Row* value) {
   serialize_row(value, leaf_node_value(node, cursor->cell_num));
 }
 
+
 ExecuteResult execute_insert(Statement* statement, Table* table) {
   void* node = get_page(table->pager, table->root_page_num);
   if ((*leaf_node_num_cells(node) >= LEAF_NODE_MAX_CELLS)) {
@@ -558,6 +560,7 @@ ExecuteResult execute_insert(Statement* statement, Table* table) {
   }
 
   Row* row_to_insert = &(statement->row_to_insert);
+  //单节点，目前只能将键值对插入到同一个节点末尾
   Cursor* cursor = table_end(table);
 
   leaf_node_insert(cursor, row_to_insert->id, row_to_insert);
@@ -567,9 +570,13 @@ ExecuteResult execute_insert(Statement* statement, Table* table) {
   return EXECUTE_SUCCESS;
 }
 
+/*
+ * 打印节点中全部数据
+ */
 ExecuteResult execute_select(Statement* statement, Table* table) {
   Cursor* cursor = table_start(table);
-
+  
+  // 通过游标一条一条往下走来打印数据，直到走到节点末尾
   Row row;
   while (!(cursor->end_of_table)) {
     deserialize_row(cursor_value(cursor), &row);
