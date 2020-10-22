@@ -69,7 +69,7 @@ const uint32_t PAGE_SIZE = 4096;
 const uint32_t TABLE_MAX_PAGES = 100;
 
 /*
- * Pager
+ * Pager            页面调度程序
  * file_descriptor  已经打开的文件描述 
  * file_length      文件大小
  * num_pages        目前存储了多少页
@@ -85,6 +85,7 @@ typedef struct Pager {
 /*
  * 数据结构
  * BTree部分
+ * root_page_num   根节点对应的页码
  */
 typedef struct Table {
   Pager* pager;
@@ -192,7 +193,6 @@ const uint32_t INTERNAL_NODE_CHILD_SIZE = sizeof(uint32_t);
 const uint32_t INTERNAL_NODE_CELL_SIZE =
     INTERNAL_NODE_CHILD_SIZE + INTERNAL_NODE_KEY_SIZE;
 const uint32_t INTERNAL_NODE_MAX_CELLS = 3;
-
 
 
 /*
@@ -409,15 +409,13 @@ Cursor* leaf_node_find(Table* table, uint32_t page_num, uint32_t key) {
     }
   }
   
-  //通过二分查找来看是否有比目标小的key，如果有则返回小的那一个来进行排序
   cursor->cell_num = start;
   return cursor;
 }
 
  uint32_t internal_node_find_child(void* node, uint32_t key){
   /*
-  Return the index of the child which should contain
-  the given key.
+
   */
 
   uint32_t num_keys = *internal_node_num_keys(node);
@@ -491,7 +489,6 @@ void create_new_root(Table*table, uint32_t right_child_page_num){
 
   /*
    * 初始化为内部节点
-   * 
    */
   initialize_internal_node(root);
   set_node_root(root, true);
@@ -818,13 +815,13 @@ PrepareResult prepare_insert(InputBuffer* input_buffer, Statement* statement) {
 }
 
 /*
- * 命令处理
+ * 解析器
  * SQL Command Processor
  */
 PrepareResult prepare_statement(InputBuffer* input_buffer,
                                 Statement* statement) {
   if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
-    return prepare_insert(input_buffer, statement);
+    return prepare_insert(input_buffer, statement); 
   }
   if (strcmp(input_buffer->buffer, "select") == 0) {
     statement->type = STATEMENT_SELECT;
@@ -834,14 +831,14 @@ PrepareResult prepare_statement(InputBuffer* input_buffer,
   return PREPARE_UNRECOGNIZED_STATEMENT;
 }
 
-
+/*
+ * 分割节点并且创建新的子节点 
+ */
 void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
   /*
-  Create a new node and move half the cells over.
-  Insert the new value in one of the two nodes.
-  Update parent or create a new parent.
+  创建一个新的节点， 插入新数据到对应的节点中然后更新父节点。
   */
-
+ 
   void* old_node = get_page(cursor->table->pager, cursor->page_num);
   uint32_t old_max = get_node_max_key(old_node);
   uint32_t new_page_num = get_unused_page_num(cursor->table->pager);
@@ -852,9 +849,7 @@ void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
   *leaf_node_next_leaf(old_node) = new_page_num;
 
   /*
-  All existing keys plus new key should should be divided
-  evenly between old (left) and new (right) nodes.
-  Starting from the right, move each key to correct position.
+  整理节点位置，旧节点放在左边，新节点放在右边
   */
   for (int32_t i = LEAF_NODE_MAX_CELLS; i >= 0; i--) {
     void* destination_node;
@@ -875,8 +870,7 @@ void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
       memcpy(destination, leaf_node_cell(old_node, i), LEAF_NODE_CELL_SIZE);
     }
   }
-
-  /* Update cell count on both leaf nodes */
+  
   *(leaf_node_num_cells(old_node)) = LEAF_NODE_LEFT_SPLIT_COUNT;
   *(leaf_node_num_cells(new_node)) = LEAF_NODE_RIGHT_SPLIT_COUNT;
 
@@ -900,7 +894,7 @@ void leaf_node_insert(Cursor* cursor, uint32_t key, Row* value) {
   void* node = get_page(cursor->table->pager, cursor->page_num);
 
   uint32_t num_cells = *leaf_node_num_cells(node);
-  // 当插入的数据超过阈值时，分割节点产生新的子节点
+  // 分割节点产生新的子节点
   if (num_cells >= LEAF_NODE_MAX_CELLS) {
     leaf_node_split_and_insert(cursor, key, value);
     return;
@@ -921,7 +915,6 @@ void leaf_node_insert(Cursor* cursor, uint32_t key, Row* value) {
   serialize_row(value, leaf_node_value(node, cursor->cell_num));
 }
 
-
 ExecuteResult execute_insert(Statement* statement, Table* table) {
   void* node = get_page(table->pager, table->root_page_num);
   uint32_t num_cells = (*leaf_node_num_cells(node));
@@ -936,7 +929,7 @@ ExecuteResult execute_insert(Statement* statement, Table* table) {
       return EXECUTE_DUPLICATE_KEY;
     }
   }
-
+  
   leaf_node_insert(cursor, row_to_insert->id, row_to_insert);
 
   free(cursor);
